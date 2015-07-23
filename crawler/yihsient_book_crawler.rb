@@ -1,8 +1,9 @@
 require 'crawler_rocks'
 require 'pry'
 require 'iconv'
-require 'isbn'
 require 'json'
+
+require 'book_toolkit'
 
 require 'thread'
 require 'thwait'
@@ -10,7 +11,10 @@ require 'thwait'
 class YihsientBookCrawler
   include CrawlerRocks::DSL
 
-  def initialize
+  def initialize update_progress: nil, after_each: nil
+    @update_progress_proc = update_progress
+    @after_each_proc = after_each
+
     @query_url = "http://www.yihsient.com.tw/front/bin/ptsearch.phtml"
     @detail_url = "http://www.yihsient.com.tw/front/bin/ptdetail.phtml"
     @ic = Iconv.new("utf-8//translit//IGNORE","big5")
@@ -70,24 +74,38 @@ class YihsientBookCrawler
             attribute.match(/譯者 : (.+)/) {|m| author ||= m[1].strip if not m[1].strip.empty? }
           end
 
-          isbn = isbn_13 || ISBN.thirteen(isbn_10)
+          isbn = isbn_13 || isbn_10
 
           edition = nil if edition = 0
 
-          @books << {
+          invalid_isbn = nil
+          begin
+            isbn = BookToolkit.to_isbn13(isbn)
+          rescue Exception => e
+            invalid_isbn = isbn
+            isbn = nil
+          end
+
+
+          book = {
             name: datas[2] && datas[2].text.strip,
             author: author,
             edition: edition.to_i,
-            price: datas[8] && datas[8].text.gsub(/[^\d]/, '').to_i,
+            original_price: datas[8] && datas[8].text.gsub(/[^\d]/, '').to_i,
             internal_code: internal_code,
             url: url,
             isbn: isbn,
+            invalid_isbn: invalid_isbn,
             external_image_url: external_image_url,
             publisher: publisher,
+            known_supplier: 'yihsient'
           }
 
+          @after_each_proc.call(book: book) if @after_each_proc
+
+          @books << book
           done_book_count += 1
-          print "#{done_book_count} / #{book_count}\n"
+          # print "#{done_book_count} / #{book_count}\n"
         end # end Thread do
       end # end each row
 
@@ -100,5 +118,5 @@ class YihsientBookCrawler
   end
 end
 
-cc = YihsientBookCrawler.new
-File.write('yihsient_books.json', JSON.pretty_generate(cc.books))
+# cc = YihsientBookCrawler.new
+# File.write('yihsient_books.json', JSON.pretty_generate(cc.books))
